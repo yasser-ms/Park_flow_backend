@@ -16,7 +16,7 @@ def create_app():
     jwt.init_app(app)
     CORS(app, resources={r"/*": {"origins": [
     "http://localhost:5173",
-    "https://parkingflowapp.netlify.app"
+    "https://park-flow-web-app.onrender.com"
     ]}}, supports_credentials=True)
     from app.routes.routes import main
     from app.routes.auth import auth
