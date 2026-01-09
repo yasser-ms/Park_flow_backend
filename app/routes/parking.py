@@ -10,7 +10,7 @@ import bcrypt
 import random
 
 from app.extensions import db
-from app.models import Parking
+from app.models import Parking, Contrat, Place
 
 parkings = Blueprint('parkings', __name__)
 
@@ -33,3 +33,19 @@ def get_parkings():
         ],
         'total': len(parkings)
     }), 200
+
+@parkings.route('/<string:id_place>', methods=['GET'])
+@jwt_required()
+def get_parking_contrat(id_place):
+    try:
+        place = db.session.get(Place, id_place)
+        id_parking = place.id_parking
+        if not place:
+            return jsonify({'error': 'Place non trouvée'}), 404
+
+        return jsonify({
+            'id_parking': id_parking,
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

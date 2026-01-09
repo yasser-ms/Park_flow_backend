@@ -11,7 +11,7 @@ import bcrypt
 import random
 
 from app.extensions import db
-from app.models import Contrat, Client, Vehicule, Abonnement, Tickethoraire, Place, Parking
+from app.models import Contrat, Client, Vehicule, Abonnement,Paiement , Tickethoraire, Place, Parking
 
 from datetime import datetime, timedelta
 import random
@@ -63,87 +63,130 @@ def generate_contrat_id():
 @contrats.route('/', methods=['POST'])
 @jwt_required()
 def create_contrat():
-    """Create a new contrat (abonnement or ticketHoraire)"""
+    """Create a new contrat (abonnement or ticketHoraire) with automatic place assignment"""
     try:
         client_id = get_jwt_identity()
         data = request.get_json()
-        id_parking = Parking.query.filter(Parking.id_parking == data['id_parking']).first()
 
-    
-        required = ['type_contrat', 'id_vehicule', 'id_place', 'date_debut', 'duree','id_parking']
+        # Vérification du JSON
+        if not data:
+            return jsonify({'error': 'JSON invalide ou manquant'}), 400
+
+        # Champs requis
+        required = ['type_contrat', 'id_vehicule', 'date_debut', 'duree', 'id_parking']
         for field in required:
             if field not in data:
                 return jsonify({'error': f'Le champ {field} est requis'}), 400
 
+        # Validation du type de contrat
         valid_types = ['abonnement', 'ticketHoraire']
-        c_type = data.get('type_contrat')
+        c_type = data['type_contrat']
         if c_type not in valid_types:
             return jsonify({'error': f'Type invalide. Choisissez parmi: {valid_types}'}), 400
 
+        # Conversion et validation de la durée
+        try:
+            duree = int(data['duree'])
+        except ValueError:
+            return jsonify({'error': 'duree doit être un entier'}), 400
+
+        # Vérification du véhicule
         vehicule = db.session.get(Vehicule, data['id_vehicule'])
         if not vehicule:
             return jsonify({'error': 'Véhicule non trouvé'}), 404
         if vehicule.id_client.strip() != client_id.strip():
             return jsonify({'error': 'Ce véhicule ne vous appartient pas'}), 403
+        if not vehicule.type:
+            return jsonify({'error': 'Type de véhicule non défini'}), 400
 
+        # Vérification du parking
+        parking = db.session.get(Parking, data['id_parking'])
+        if not parking:
+            return jsonify({'error': 'Parking non trouvé'}), 404
 
-        place = db.session.get(Place, data['id_place'])
+        # Attribution automatique d'une place compatible (SQLite-safe)
+        place = (
+            db.session.query(Place)
+            .filter(
+                Place.id_parking == data['id_parking'],
+                Place.est_dispo == True,
+                Place.type_place == vehicule.type
+            )
+            .first()
+        )
+
         if not place:
-            return jsonify({'error': 'Place non trouvée'}), 404
-        if not place.est_dispo:
-            return jsonify({'error': 'Cette place n\'est pas disponible'}), 400
-        if place.id_parking.strip() != data['id_parking'].strip():
-            return jsonify({'error': 'Cette place n\'est pas dans ce parking'}), 400
+            return jsonify({
+                'error': 'Aucune place disponible pour ce type de véhicule dans ce parking'
+            }), 409
 
-  
-        date_debut = datetime.fromisoformat(data['date_debut'])
-        duree = data['duree']  # in hours for ticket, in days for abonnement
+        # Gestion de la date de début
+        try:
+            date_debut = datetime.fromisoformat(data['date_debut'])
+        except ValueError:
+            return jsonify({'error': 'Format date_debut invalide (ISO requis)'}), 400
 
+        # Calcul de la date de fin
         if c_type == 'ticketHoraire':
             date_fin = date_debut + timedelta(hours=duree)
-        else:  
+        else:
             date_fin = date_debut + timedelta(days=duree)
 
-     
+        # Génération de l'ID du contrat
         contrat_id = generate_contrat_id()
 
-
+        # Création du contrat
         new_contrat = Contrat(
             id_contrat=contrat_id,
             id_vehicule=data['id_vehicule'],
-            id_place=data['id_place'],
+            id_place=place.id_place,
             date_debut=date_debut,
             date_fin=date_fin,
             etat_contrat='actif',
             type_contrat=c_type
         )
+
         db.session.add(new_contrat)
 
-        
+        # Marquer la place comme occupée
         place.est_dispo = False
 
+        # Sauvegarde du contrat + place
         db.session.commit()
 
-   
+        # Création des détails du contrat
         if c_type == 'abonnement':
-            tarif_mensuel = data.get('tarif_mensuel', 50.00)
-            renouvelable = data.get('renouvelable', True)
+            tarif_mensuel = float(data.get('tarif_mensuel', 50.00))
+            renouvelable = bool(data.get('renouvelable', True))
+
             db.session.execute(
                 text("""
                     INSERT INTO abonnement (id_abonnement, tarif_mensuel, renouvelable)
                     VALUES (:id, :tarif, :renouv)
                 """),
-                {'id': contrat_id, 'tarif': tarif_mensuel, 'renouv': renouvelable}
+                {
+                    'id': contrat_id,
+                    'tarif': tarif_mensuel,
+                    'renouv': renouvelable
+                }
             )
-        else: 
-            tarif_horaire = data.get('tarif_horaire', 2.50)
+        else:
+            tarif_horaire = float(data.get('tarif_horaire', 2.50))
+
             db.session.execute(
                 text("""
                     INSERT INTO tickethoraire (id_ticket, tarif_horaire, duree_totale)
                     VALUES (:id, :tarif, :duree)
                 """),
-                {'id': contrat_id, 'tarif': tarif_horaire, 'duree': timedelta(hours=duree)}
+                {
+                    'id': contrat_id,
+                    'tarif': tarif_horaire,
+                    'duree': timedelta(hours=duree)
+                }
             )
+
+        # Commit final
+        db.session.commit()
 
         return jsonify({
             'message': 'Contrat créé avec succès',
@@ -151,7 +194,8 @@ def create_contrat():
                 'id_contrat': contrat_id,
                 'type_contrat': c_type,
                 'id_vehicule': data['id_vehicule'],
-                'id_place': data['id_place'],
+                'id_place': place.id_place,
+                'id_parking': data['id_parking'],
                 'date_debut': date_debut.isoformat(),
                 'date_fin': date_fin.isoformat(),
                 'etat_contrat': 'actif',
@@ -161,23 +205,33 @@ def create_contrat():
 
     except Exception as e:
         db.session.rollback()
+        print("ERREUR CREATE CONTRAT :", e)
         return jsonify({'error': str(e)}), 500
 
 
+
 ## reslier contrat -> Delete from DB
-@contrats.route('/<string:id_contart>', methods=['DELETE'])
+@contrats.route('/<string:id_contrat>', methods=['DELETE'])
 @jwt_required()
-def delete_contrat(id_contart):
+def delete_contrat(id_contrat):
     try:
-        contrat = db.session.query(Contrat).filter(Contrat.id_contrat == id_contart).first()
-        id_place = contrat.id_place
+        contrat = db.session.query(Contrat).filter(Contrat.id_contrat == id_contrat).first()
+        if not contrat:
+            return jsonify({'error': 'Contrat non trouvé'}), 404
 
-        #make the place disponible
-        place = db.session.query(Place).filter(Place.id_place == id_place).first()
-        place.est_dispo = True
+        # Make the place available
+        place = db.session.query(Place).filter(Place.id_place == contrat.id_place).first()
+        if place:
+            place.est_dispo = True
 
-        abnm = db.session.query(Abonnement).filter(Abonnement.id_abonnement == id_contart).first()
-        tktH = db.session.query(Tickethoraire).filter(Tickethoraire.id_ticket == id_contart).first()
+        # Delete associated paiements first
+        paiements = db.session.query(Paiement).filter(Paiement.id_contrat == id_contrat).all()
+        for p in paiements:
+            db.session.delete(p)
+
+        # Delete associated abonnement or ticketHoraire
+        abnm = db.session.query(Abonnement).filter(Abonnement.id_abonnement == id_contrat).first()
+        tktH = db.session.query(Tickethoraire).filter(Tickethoraire.id_ticket == id_contrat).first()
 
         if tktH:
             db.session.delete(tktH)
@@ -186,7 +240,48 @@ def delete_contrat(id_contart):
 
         db.session.delete(contrat)
         db.session.commit()
-        return jsonify({'success': 'contart supprimer'})
+        return jsonify({'success': 'Contrat supprimé'}), 200
     except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+@contrats.route('/active', methods=['GET'])
+def get_active_contrats():
+    try:
+        activeContrasts = db.session.query(Contrat).filter(Contrat.etat_contrat == 'actif').all()
+        response = jsonify({
+            "total_active_contrats": len(activeContrasts)
+        })
+        return response, 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+@contrats.route('/<string:id_contrat>/abn/', methods=['GET'])
+@jwt_required()
+def get_abn(id_contrat):
+    try:
+        abn = db.session.query(Abonnement).filter_by(id_abonnement=id_contrat).first()
+        response = jsonify({
+            'success' : 'yes',
+            'abn' : {
+                'tarif_mensuel' : abn.tarif_mensuel,
+            }
+        })
+        return response, 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    
+@contrats.route('/<string:id_contrat>/tk/', methods=['GET'])
+@jwt_required()
+def get_tkh(id_contrat):
+    try:
+        tk = db.session.query(Tickethoraire).filter_by(id_ticket=id_contrat).first()
+        response = jsonify({
+            'success' : 'yes',
+            'tk' : {
+                'tarif_mensuel' : tk.tarif_horaire,
+            }
+        })
+        return response, 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400

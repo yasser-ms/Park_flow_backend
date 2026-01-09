@@ -1,7 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import (
-    create_access_token,
-    create_refresh_token,
+    get_csrf_token,
     jwt_required,
     get_jwt_identity,
     get_jwt, exceptions
@@ -82,7 +81,7 @@ def add_vehicule():
                 'type': new_vehicule.type,
                 'modele': new_vehicule.modele
             }
-        }),
+        }),200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
@@ -91,12 +90,11 @@ def add_vehicule():
 @jwt_required()
 def delete_vehicule(id_vehicule):
     try:
-        id_client = get_jwt_identity()
         vehicule = db.session.query(Vehicule).filter_by(id_vehicule=id_vehicule).first()
         
         db.session.delete(vehicule)
         db.session.commit()
-
+        ## csrf_token = get_csrf_token()
         return jsonify({
             'message': 'suppression de vehicule avec succés',
         }), 200

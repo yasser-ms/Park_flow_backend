@@ -16,7 +16,6 @@ places = Blueprint('places', __name__)
 
 
 @places.route('/', methods=['GET'])
-@jwt_required()
 def get_places():
     """Get all places with stats by type and parking"""
     try:
@@ -65,3 +64,25 @@ def get_places():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+@places.route('/est_dispo', methods=['GET'])
+def get_places_by_availability():
+    """Get places filtered by availability"""
+    try:
+        places_dispo = db.session.query(Place).filter_by(est_dispo=True).all()
+        
+        reponse = jsonify({
+            'places_disponibles': [
+                {
+                    'id_place': p.id_place.strip(),
+                    'id_parking': p.id_parking.strip(),
+                    'type_place': p.type_place,
+                    'est_dispo': p.est_dispo
+                } for p in places_dispo
+            ],
+            'total_disponibles': len(places_dispo)
+        })
+        return reponse, 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+

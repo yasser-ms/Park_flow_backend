@@ -1,14 +1,18 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, make_response
 from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
     jwt_required,
     get_jwt_identity,
-    get_jwt
+    get_jwt,
+    set_access_cookies,
+    set_refresh_cookies,
+    unset_jwt_cookies,
+    get_csrf_token
 )
 import bcrypt
 import random
-
+from flask_cors import CORS
 from app.extensions import db
 from app.models import Client
 
@@ -63,8 +67,8 @@ def register():
 
         access_token = create_access_token(identity=new_client.id_client)
         refresh_token = create_refresh_token(identity=new_client.id_client)
-
-        return jsonify({
+        
+        response = make_response(jsonify({
             'message': 'Inscription réussie',
             'client': {
                 'id_client': new_client.id_client.strip(),
@@ -74,7 +78,9 @@ def register():
             },
             'access_token': access_token,
             'refresh_token': refresh_token
-        }), 201
+        }))
+
+        return response,  201
 
     except Exception as e:
         db.session.rollback()
@@ -104,17 +110,24 @@ def login():
         access_token = create_access_token(identity=client.id_client)
         refresh_token = create_refresh_token(identity=client.id_client)
 
-        return jsonify({
-            'message': 'Connexion réussie',
-            'client': {
-                'id_client': client.id_client.strip(),
-                'nom': client.nom,
-                'prenom': client.prenom,
-                'adresse_mail': client.adresse_mail
-            },
-            'access_token': access_token,
-            'refresh_token': refresh_token
-        }), 200
+        response = make_response(
+            jsonify({
+                'message': 'Connexion réussie',
+                'client': {
+                    'id_client': client.id_client.strip(),
+                    'nom': client.nom,
+                    'prenom': client.prenom,
+                    'adresse_mail': client.adresse_mail
+                },
+            })
+        )
+        
+        
+        # Set cookies on the response
+        set_access_cookies(response, access_token)
+        set_refresh_cookies(response, refresh_token)
+
+        return response, 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -126,7 +139,10 @@ def logout():
     """Logout - invalidate token"""
     jti = get_jwt()['jti']
     blacklist.add(jti)
-    return jsonify({'message': 'Déconnexion réussie'}), 200
+    # remove the cookies
+    response = jsonify({'message': 'Déconnexion réussie'})
+    unset_jwt_cookies(response)
+    return response, 200
 
 
 @auth.route('/me', methods=['GET'])

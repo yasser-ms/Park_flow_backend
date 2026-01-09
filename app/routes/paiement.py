@@ -12,7 +12,7 @@ import random
 from datetime import datetime
 
 from app.extensions import db
-from app.models import Paiement, Contrat, Abonnement, Tickethoraire
+from app.models import Paiement, Contrat, Abonnement, Tickethoraire, Client
 
 paiement = Blueprint('paiement', __name__)
 
@@ -21,16 +21,27 @@ paiement = Blueprint('paiement', __name__)
 def get_paiement():
     id_client = get_jwt_identity()
     paiements = db.session.query(Paiement).filter(Paiement.id_client == id_client).all()
-
-    return jsonify(
+    response =  jsonify({
+    "paiements": [
         {
-           'id_paiement' : paiement.id_paiement,
-            'id_contart' : paiement.id_contart,
-            'id_client' : paiement.id_client,
-            'date_paiement' : paiement.date_paiement,
-            'montant' : paiement.montant,
-        } for paiement in paiements
-    )
+            "id_paiement": paiement.id_paiement,
+            "id_contrat": paiement.id_contrat,
+            "id_client": paiement.id_client,
+            "date_paiement": paiement.date_paiement,
+            "montant": paiement.montant,
+        }
+        for paiement in paiements
+    ],
+})
+    return response, 200
+
+@paiement.route('/montant', methods=['GET'])
+def get_montant():
+    """Get moneyyyy"""
+    paiements = db.session.query(Paiement).all()
+    total_montant = sum(p.montant for p in paiements)
+    return {"total_montant": total_montant}
+
 
 
 @paiement.route('/', methods=['POST'])
@@ -75,6 +86,8 @@ def create_paiement():
 
         db.session.add(new_paiement)
         db.session.commit()
+        
+        ## update paiement details in db for the user in the client table 
 
         return jsonify({
             'message': 'Paiement effectué',
