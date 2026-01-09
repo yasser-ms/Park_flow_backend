@@ -14,8 +14,10 @@ def create_app():
     
     db.init_app(app)
     jwt.init_app(app)
-    CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
-    
+    CORS(app, resources={r"/*": {"origins": [
+    "http://localhost:5173",
+    "https://parkingflowapp.netlify.app"
+    ]}}, supports_credentials=True)
     from app.routes.routes import main
     from app.routes.auth import auth
     from app.routes.vehicule import vehicules
